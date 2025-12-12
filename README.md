@@ -1,0 +1,1 @@
+Fui desafiado pelo Venilton da DIO a desenvolver um ETL mesmo que não utilizasse o api do chatgpt, então lembrei de um problema que enfrento diariamente no meu trabalho e quebrei a cabeça para criar essa solução.
