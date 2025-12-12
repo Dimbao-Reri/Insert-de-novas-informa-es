@@ -1,0 +1,113 @@
+from google.colab import auth
+import gspread
+from google.auth import default
+import pandas as pd
+import gspread.utils
+
+
+# 1. AUTENTICAÇÃO
+
+auth.authenticate_user()
+creds, _ = default()
+gc = gspread.authorize(creds)
+print("✅ Autenticação gspread concluída.")
+
+
+# 2. DEFINIÇÃO DAS URLS
+
+url_entrada01 = 'https://docs.google.com/spreadsheets/d/1dT6AB9FkS_YVTJ8QBKMAwkI4hB_jL2VXlVPiSlbuwuQ/edit#gid=0'
+url_entrada02 = 'https://docs.google.com/spreadsheets/d/1KqIf2g9NEk1hU0Y6azOlj9UEaF67KvC8fVEX7Y-ajrY/edit#gid=123456' 
+
+
+# 3. FUNÇÃO PARA EXTRAIR O ID
+
+def extrair_id_da_url(url):
+  """Extrai a sequência de ID da URL da planilha."""
+  try:
+    return url.split('/d/')[1].split('/')[0]
+  except IndexError:
+    raise ValueError("Formato de URL inválido.")
+
+
+# 4. EXTRAÇÃO (E)
+
+
+try:
+    id_planilha01 = extrair_id_da_url(url_entrada01)
+    sh1 = gc.open_by_key(id_planilha01)
+    worksheet1 = sh1.sheet1 
+    df_original = pd.DataFrame(worksheet1.get_all_records())
+    
+    id_planilha02 = extrair_id_da_url(url_entrada02)
+    sh2 = gc.open_by_key(id_planilha02)
+    worksheet2 = sh2.sheet1
+    df_atualizacao = pd.DataFrame(worksheet2.get_all_records())
+    
+    print(f"\n✅ Extração concluída. Planilha 01 ({sh1.title}), Planilha 02 ({sh2.title}).")
+    
+except Exception as e:
+    print(f"❌ ERRO na Extração. Verifique permissões ou URLs. Detalhes: {e}")
+    raise
+
+# 5. TRANSFORMAÇÃO (T) - FUSÃO E ATUALIZAÇÃO
+
+coluna_chave = 'id' 
+COLUNAS_A_ATUALIZAR = ['Data indenização', 'Valor indenizado', 'Competência do Boleto (texto)']
+
+df_combinado = pd.merge(
+    df_original, 
+    df_atualizacao, 
+    on=coluna_chave, 
+    how='left', 
+    suffixes=('_original', '_novo')
+)
+
+df_final = df_combinado.copy()
+
+for coluna in COLUNAS_A_ATUALIZAR:
+    coluna_nova = f'{coluna}_novo'
+    coluna_original = f'{coluna}_original'
+    
+    if coluna_nova in df_final.columns and coluna_original in df_final.columns:
+        # Atualiza o valor: usa o '_novo' (Planilha 02) se não for NaN
+        df_final[coluna] = df_final[coluna_nova].fillna(df_final[coluna_original])
+        
+        # Remove as colunas temporárias
+        cols_to_drop = [coluna_nova, coluna_original]
+        df_final = df_final.drop(columns=cols_to_drop, errors='ignore')
+
+# Garante a ordem correta das colunas (igual à Planilha 01)
+df_final = df_final[df_original.columns]
+
+print(f"\n✅ Transformação concluída. {len(df_final)} linhas prontas para o Load.")
+print("Primeiras 5 linhas do DataFrame Final:")
+print(df_final.head())
+
+# 6. CARGA (L) - ESCREVENDO DE VOLTA NA PLANILHA 01
+
+# 1. Preparar os dados para o formato gspread (lista de listas)
+# A função 'to_list()' do Pandas simplifica esta etapa
+full_data = [df_final.columns.tolist()] + df_final.values.tolist()
+
+# 2. Determinar o tamanho e range de escrita
+num_rows = len(full_data)
+num_cols = len(df_final.columns)
+
+try:
+    # 3. Redimensionar, limpar e escrever na Planilha 01
+    worksheet1.resize(rows=num_rows, cols=num_cols) 
+    worksheet1.clear()
+
+    cell_range = f'A1:{gspread.utils.rowcol_to_a1(num_rows, num_cols)}'
+    
+    # Envia os dados
+    worksheet1.update(full_data, cell_range)
+
+    print("\n=======================================================")
+    print(f"✅ CARGA (LOAD) CONCLUÍDA NA PLANILHA 01!")
+    print(f"A Planilha '{sh1.title}' foi totalmente atualizada.")
+    print("=======================================================")
+
+except Exception as e:
+    print(f"\n❌ ERRO durante a Carga (LOAD).")
+    print(f"Detalhes do erro: {e}")
